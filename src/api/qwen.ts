@@ -1,8 +1,10 @@
 import type { ChatMessage } from "../types";
 import { SYSTEM_PROMPT } from "../types";
 
-const DASHSCOPE_ENDPOINT =
-  "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+// Прямые запросы к DashScope из браузера блокируются CORS,
+// поэтому используем локальный прокси (server/qwen-proxy.mjs).
+// В dev-режиме Vite проксирует /api/chat на порт 8787.
+const CHAT_ENDPOINT = "/api/chat";
 
 interface QwenRequestParams {
   apiKey: string;
@@ -18,7 +20,7 @@ export const sendChatRequest = async ({
   model,
   messages,
 }: QwenRequestParams): Promise<string> => {
-  const response = await fetch(DASHSCOPE_ENDPOINT, {
+  const response = await fetch(CHAT_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
