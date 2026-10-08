@@ -72,8 +72,8 @@ function ApiKeyDialog({ apiKey, onSave }: ApiKeyDialogProps) {
           <HelpText variant="body2" color="text.secondary">
             Получите ключ на платформе Alibaba Cloud DashScope. Ключ хранится
             только в вашем браузере (localStorage) и не передаётся третьим
-            лицам. Из-за политики CORS браузерные запросы к API могут
-            блокироваться — для полноценной работы добавьте прокси или бэкенд.
+            лицам. Запросы идут через локальный прокси (server/qwen-proxy.mjs),
+            который обходит ограничения CORS.
           </HelpText>
         </DialogContent>
         <DialogActions>
