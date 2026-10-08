@@ -1,174 +1,204 @@
 import { useState, useEffect } from "react";
 import useLocalStorageState from "use-local-storage-state";
 import styled from "styled-components";
-import {
-  Typography,
-  TextField,
-  Button,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
-  IconButton,
-  Checkbox,
-} from "@mui/material";
-import DeleteIcon from "@mui/icons-material/Delete";
-import EditIcon from "@mui/icons-material/Edit";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import CssBaseline from "@mui/material/CssBaseline";
+import AppBar from "@mui/material/AppBar";
+import Toolbar from "@mui/material/Toolbar";
+import Typography from "@mui/material/Typography";
+import Box from "@mui/material/Box";
+import MenuItem from "@mui/material/MenuItem";
+import Select from "@mui/material/Select";
+import SmartToyIcon from "@mui/icons-material/SmartToy";
+import { sendChatRequest, createUserMessage, createAssistantMessage } from "./api/qwen";
+import { MODELS } from "./types";
+import type { ChatSession } from "./types";
+import ApiKeyDialog from "./components/ApiKeyDialog";
+import ChatWindow from "./components/ChatWindow";
+import SessionList, { DRAWER_WIDTH } from "./components/SessionList";
 
-interface Todo {
-  id: number;
-  text: string;
-  done: boolean;
-}
+const theme = createTheme({
+  palette: {
+    primary: { main: "#6c5ce7" },
+    background: { default: "#fafafa" },
+  },
+  components: {
+    MuiPaper: {
+      styleOverrides: {
+        root: {
+          backgroundImage: "none",
+        },
+      },
+    },
+  },
+});
 
-const AppContainer = styled.div`
-  max-width: 600px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+const MainArea = styled.div`
+  margin-left: ${DRAWER_WIDTH}px;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 64px);
 `;
 
-const StyledButton = styled(Button)`
-  && {
-    margin-top: 1rem;
-  }
-`;
+const generateId = (): string =>
+  `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
-const StyledListItemText = styled(ListItemText)<{ done: boolean }>`
-  && {
-    text-decoration: ${(props) => (props.done ? "line-through" : "none")};
-  }
-`;
+const createEmptySession = (): ChatSession => ({
+  id: generateId(),
+  title: "Новый диалог",
+  messages: [],
+  createdAt: Date.now(),
+  updatedAt: Date.now(),
+});
 
 function App() {
-  const [todos, setTodos] = useLocalStorageState<Todo[]>("todos", {
-    defaultValue: [],
+  const [apiKey, setApiKey] = useLocalStorageState<string>("qwen-api-key", {
+    defaultValue: "",
   });
-  const [newTodo, setNewTodo] = useState("");
-  const [editingId, setEditingId] = useState<number | null>(null);
-  const [editText, setEditText] = useState(""); // Add this line
+  const [model, setModel] = useLocalStorageState<string>("qwen-model", {
+    defaultValue: MODELS[0].id,
+  });
+  const [sessions, setSessions] = useLocalStorageState<ChatSession[]>(
+    "qwen-sessions",
+    { defaultValue: [] }
+  );
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(
+    sessions[0]?.id ?? null
+  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (todos.length === 0) {
-      const boilerplateTodos = [
-        { id: 1, text: "Install Node.js", done: false },
-        { id: 2, text: "Install Cursor IDE", done: false },
-        { id: 3, text: "Log into Github", done: false },
-        { id: 4, text: "Fork a repo", done: false },
-        { id: 5, text: "Make changes", done: false },
-        { id: 6, text: "Commit", done: false },
-        { id: 7, text: "Deploy", done: false },
-      ];
-      setTodos(boilerplateTodos);
+    if (activeSessionId && !sessions.some((session) => session.id === activeSessionId)) {
+      setActiveSessionId(sessions[0]?.id ?? null);
     }
-  }, [todos, setTodos]);
+  }, [sessions, activeSessionId]);
 
-  const handleAddTodo = () => {
-    if (newTodo.trim() !== "") {
-      setTodos([
-        ...todos,
-        { id: Date.now(), text: newTodo.trim(), done: false },
-      ]);
-      setNewTodo("");
-    }
-  };
+  const activeSession =
+    sessions.find((session) => session.id === activeSessionId) ?? null;
 
-  const handleDeleteTodo = (id: number) => {
-    setTodos(todos.filter((todo) => todo.id !== id));
-  };
-
-  const handleToggleTodo = (id: number) => {
-    setTodos(
-      todos.map((todo) =>
-        todo.id === id ? { ...todo, done: !todo.done } : todo
+  const updateSession = (
+    sessionId: string,
+    updater: (session: ChatSession) => ChatSession
+  ) => {
+    setSessions((prev) =>
+      prev.map((session) =>
+        session.id === sessionId ? updater(session) : session
       )
     );
   };
 
-  const handleEditTodo = (id: number) => {
-    setEditingId(id);
-    const todoToEdit = todos.find((todo) => todo.id === id);
-    if (todoToEdit) {
-      setEditText(todoToEdit.text);
+  const handleNewChat = () => {
+    const session = createEmptySession();
+    setSessions([session, ...sessions]);
+    setActiveSessionId(session.id);
+    setError(null);
+  };
+
+  const handleDeleteSession = (sessionId: string) => {
+    const remaining = sessions.filter((session) => session.id !== sessionId);
+    setSessions(remaining);
+    if (activeSessionId === sessionId) {
+      setActiveSessionId(remaining[0]?.id ?? null);
     }
   };
 
-  const handleUpdateTodo = (id: number) => {
-    if (editText.trim() !== "") {
-      setTodos(
-        todos.map((todo) =>
-          todo.id === id ? { ...todo, text: editText.trim() } : todo
-        )
-      );
+  const handleSend = async (text: string) => {
+    if (!apiKey) {
+      setError("Сначала укажите API-ключ Alibaba Cloud DashScope.");
+      return;
     }
-    setEditingId(null);
-    setEditText("");
+
+    let session = activeSession;
+    if (!session) {
+      session = createEmptySession();
+      setSessions([session, ...sessions]);
+      setActiveSessionId(session.id);
+    }
+
+    const userMessage = createUserMessage(text);
+    const updatedMessages = [...session.messages, userMessage];
+    const sessionId = session.id;
+
+    updateSession(sessionId, (prev) => ({
+      ...prev,
+      messages: updatedMessages,
+      title: prev.messages.length === 0 ? text.slice(0, 40) : prev.title,
+      updatedAt: Date.now(),
+    }));
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      const answer = await sendChatRequest({
+        apiKey,
+        model,
+        messages: updatedMessages,
+      });
+      updateSession(sessionId, (prev) => ({
+        ...prev,
+        messages: [...prev.messages, createAssistantMessage(answer)],
+        updatedAt: Date.now(),
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Неизвестная ошибка");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
-    <AppContainer>
-      <Typography variant="h4" component="h1" gutterBottom>
-        Todo List
-      </Typography>
-      <TextField
-        fullWidth
-        variant="outlined"
-        label="New Todo"
-        value={newTodo}
-        onChange={(e) => setNewTodo(e.target.value)}
-        onKeyPress={(e) => e.key === "Enter" && handleAddTodo()}
-        autoFocus // Add this line to enable autofocus
-      />
-      <StyledButton
-        variant="contained"
-        color="primary"
-        fullWidth
-        onClick={handleAddTodo}
-      >
-        Add Todo
-      </StyledButton>
-      <List>
-        {todos.map((todo) => (
-          <ListItem key={todo.id} dense>
-            <Checkbox
-              edge="start"
-              checked={todo.done}
-              onChange={() => handleToggleTodo(todo.id)}
-            />
-            {editingId === todo.id ? (
-              <TextField
-                fullWidth
-                value={editText}
-                onChange={(e) => setEditText(e.target.value)}
-                onBlur={() => handleUpdateTodo(todo.id)}
-                onKeyPress={(e) =>
-                  e.key === "Enter" && handleUpdateTodo(todo.id)
-                }
-                autoFocus
-              />
-            ) : (
-              <StyledListItemText primary={todo.text} done={todo.done} />
-            )}
-            <ListItemSecondaryAction>
-              <IconButton
-                edge="end"
-                aria-label="edit"
-                onClick={() => handleEditTodo(todo.id)}
-              >
-                <EditIcon />
-              </IconButton>
-              <IconButton
-                edge="end"
-                aria-label="delete"
-                onClick={() => handleDeleteTodo(todo.id)}
-              >
-                <DeleteIcon />
-              </IconButton>
-            </ListItemSecondaryAction>
-          </ListItem>
-        ))}
-      </List>
-    </AppContainer>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <AppBar position="static">
+        <Toolbar>
+          <SmartToyIcon sx={{ mr: 1 }} />
+          <Typography variant="h6" sx={{ flexGrow: 1 }}>
+            Qwen Чат
+          </Typography>
+          <Select
+            size="small"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            sx={{
+              mr: 2,
+              color: "#fff",
+              "& .MuiSelect-icon": { color: "#fff" },
+            }}
+          >
+            {MODELS.map((item) => (
+              <MenuItem key={item.id} value={item.id}>
+                {item.label}
+              </MenuItem>
+            ))}
+          </Select>
+          <ApiKeyDialog apiKey={apiKey} onSave={setApiKey} />
+        </Toolbar>
+      </AppBar>
+      <Box sx={{ display: "flex" }}>
+        <SessionList
+          sessions={sessions}
+          activeId={activeSessionId}
+          onSelect={(id) => {
+            setActiveSessionId(id);
+            setError(null);
+          }}
+          onDelete={handleDeleteSession}
+          onNewChat={handleNewChat}
+        />
+        <MainArea>
+          <ChatWindow
+            messages={activeSession?.messages ?? []}
+            isLoading={isLoading}
+            error={error}
+            disabled={!apiKey}
+            onSend={handleSend}
+            onDismissError={() => setError(null)}
+          />
+        </MainArea>
+      </Box>
+    </ThemeProvider>
   );
 }
 
